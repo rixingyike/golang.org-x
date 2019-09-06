@@ -1,3 +1,0 @@
-注意：原golang/net移至x/net目录下
-
-是第三方Go语言类库中的golang.org/x/...类库的集合，由于原golang地址在国内下载不便，所以集了这个仓库。
