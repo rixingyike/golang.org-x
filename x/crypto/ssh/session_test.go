@@ -35,7 +35,7 @@ func dial(handler serverType, t *testing.T) *Client {
 		}
 		conf.AddHostKey(testSigners["rsa"])
 
-		_, chans, reqs, err := NewServerConn(c1, &conf)
+		conn, chans, reqs, err := NewServerConn(c1, &conf)
 		if err != nil {
 			t.Fatalf("Unable to handshake: %v", err)
 		}
@@ -56,10 +56,14 @@ func dial(handler serverType, t *testing.T) *Client {
 				handler(ch, inReqs, t)
 			}()
 		}
+		if err := conn.Wait(); err != io.EOF {
+			t.Logf("server exit reason: %v", err)
+		}
 	}()
 
 	config := &ClientConfig{
-		User: "testuser",
+		User:            "testuser",
+		HostKeyCallback: InsecureIgnoreHostKey(),
 	}
 
 	conn, chans, reqs, err := NewClientConn(c2, "", config)
@@ -297,7 +301,6 @@ func TestUnknownExitSignal(t *testing.T) {
 	}
 }
 
-// Test WaitMsg is not returned if the channel closes abruptly.
 func TestExitWithoutStatusOrSignal(t *testing.T) {
 	conn := dial(exitWithoutSignalOrStatus, t)
 	defer conn.Close()
@@ -313,11 +316,8 @@ func TestExitWithoutStatusOrSignal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected command to fail but it didn't")
 	}
-	_, ok := err.(*ExitError)
-	if ok {
-		// you can't actually test for errors.errorString
-		// because it's not exported.
-		t.Fatalf("expected *errorString but got %T", err)
+	if _, ok := err.(*ExitMissingError); !ok {
+		t.Fatalf("got %T want *ExitMissingError", err)
 	}
 }
 
@@ -361,10 +361,9 @@ func TestServerWindow(t *testing.T) {
 	}
 	written, err := copyNRandomly("stdin", serverStdin, origBuf, windowTestBytes)
 	if err != nil {
-		t.Fatalf("failed to copy origBuf to serverStdin: %v", err)
-	}
-	if written != windowTestBytes {
-		t.Fatalf("Wrote only %d of %d bytes to server", written, windowTestBytes)
+		t.Errorf("failed to copy origBuf to serverStdin: %v", err)
+	} else if written != windowTestBytes {
+		t.Errorf("Wrote only %d of %d bytes to server", written, windowTestBytes)
 	}
 
 	echoedBytes := <-result
@@ -645,7 +644,8 @@ func TestSessionID(t *testing.T) {
 	}
 	serverConf.AddHostKey(testSigners["ecdsa"])
 	clientConf := &ClientConfig{
-		User: "user",
+		HostKeyCallback: InsecureIgnoreHostKey(),
+		User:            "user",
 	}
 
 	go func() {
@@ -751,7 +751,9 @@ func TestHostKeyAlgorithms(t *testing.T) {
 
 	// By default, we get the preferred algorithm, which is ECDSA 256.
 
-	clientConf := &ClientConfig{}
+	clientConf := &ClientConfig{
+		HostKeyCallback: InsecureIgnoreHostKey(),
+	}
 	connect(clientConf, KeyAlgoECDSA256)
 
 	// Client asks for RSA explicitly.

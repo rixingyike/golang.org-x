@@ -16,8 +16,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
-	"golang.org/x/text/internal"
+	"golang.org/x/text/internal/language/compact"
+
 	"golang.org/x/text/internal/gen"
 	"golang.org/x/text/internal/tag"
 	"golang.org/x/text/language"
@@ -170,7 +172,47 @@ func (b *builder) genCurrencies(w *gen.CodeWriter, data *cldr.SupplementalData) 
 
 	w.WriteType(toCurrency{})
 	w.WriteVar("regionToCurrency", regionToCurrency)
+
+	// Create a table that maps regions to currencies.
+	regionData := []regionInfo{}
+
+	for _, reg := range data.CurrencyData.Region {
+		if len(reg.Iso3166) != 2 {
+			log.Fatalf("Unexpected group %q in region data", reg.Iso3166)
+		}
+		for _, cur := range reg.Currency {
+			from, _ := time.Parse("2006-01-02", cur.From)
+			to, _ := time.Parse("2006-01-02", cur.To)
+			code := uint16(b.currencies.Index([]byte(cur.Iso4217)))
+			if cur.Tender == "false" {
+				code |= nonTenderBit
+			}
+			regionData = append(regionData, regionInfo{
+				region: regionToCode(language.MustParseRegion(reg.Iso3166)),
+				code:   code,
+				from:   toDate(from),
+				to:     toDate(to),
+			})
+		}
+	}
+	sort.Stable(byRegionCode(regionData))
+
+	w.WriteType(regionInfo{})
+	w.WriteVar("regionData", regionData)
 }
+
+type regionInfo struct {
+	region uint16
+	code   uint16 // 0x8000 not legal tender
+	from   uint32
+	to     uint32
+}
+
+type byRegionCode []regionInfo
+
+func (a byRegionCode) Len() int           { return len(a) }
+func (a byRegionCode) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a byRegionCode) Less(i, j int) bool { return a[i].region < a[j].region }
 
 type toCurrency struct {
 	region uint16
@@ -224,7 +266,7 @@ func (b *builder) genSymbols(w *gen.CodeWriter, data *cldr.CLDR) {
 		numTypes
 	)
 	// language -> currency -> type ->  symbol
-	var symbols [language.NumCompactTags][][numTypes]*string
+	var symbols [compact.NumCompactTags][][numTypes]*string
 
 	// Collect symbol information per language.
 	for _, lang := range data.Locales() {
@@ -233,7 +275,7 @@ func (b *builder) genSymbols(w *gen.CodeWriter, data *cldr.CLDR) {
 			continue
 		}
 
-		langIndex, ok := language.CompactIndex(language.MustParse(lang))
+		langIndex, ok := compact.LanguageID(compact.Tag(language.MustParse(lang)))
 		if !ok {
 			log.Fatalf("No compact index for language %s", lang)
 		}
@@ -277,8 +319,8 @@ func (b *builder) genSymbols(w *gen.CodeWriter, data *cldr.CLDR) {
 				if sym == nil {
 					continue
 				}
-				for p := uint16(langIndex); p != 0; {
-					p = internal.Parent[p]
+				for p := compact.ID(langIndex); p != 0; {
+					p = p.Parent()
 					x := symbols[p]
 					if x == nil {
 						continue
